@@ -12,7 +12,7 @@ SRS_FILE = "srs_progress.json"
 # Load vocabulary
 # -----------------------------
 df = pd.read_excel(
-    "/home/umair/Data/zGerman/DeutschVocabulary.ods",
+    "DeutschVocabulary.ods",
     engine="odf",
     header=None
 )
