@@ -9,24 +9,30 @@ from tkinter import ttk, messagebox, scrolledtext
 SRS_FILE = "srs_progress.json"
 
 # -----------------------------
-# Load vocabulary
+# Load vocabulary from selected sheet
 # -----------------------------
-df = pd.read_excel(
-    "DeutschVocabulary.ods",
-    engine="odf",
-    header=None
-)
+def load_vocabulary(sheet_name):
+    """Load vocabulary from a specific sheet in the ODS file"""
+    df = pd.read_excel(
+        "DeutschVocabulary.ods",
+        engine="odf",
+        sheet_name=sheet_name,
+        header=None
+    )
+    
+    vocab_list = []
+    for _, row in df.iterrows():
+        row = list(row)
+        for i in range(0, len(row) - 1, 2):
+            german = row[i]
+            english = row[i + 1]
+            if pd.notna(german) and pd.notna(english):
+                vocab_list.append((str(german).strip(), str(english).strip()))
+    
+    return vocab_list
 
+# Global variable - will be set after sheet selection
 vocab = []
-for _, row in df.iterrows():
-    row = list(row)
-    for i in range(0, len(row) - 1, 2):
-        german = row[i]
-        english = row[i + 1]
-        if pd.notna(german) and pd.notna(english):
-            vocab.append((str(german).strip(), str(english).strip()))
-
-print(f"Loaded {len(vocab)} words\n")
 
 # -----------------------------
 # Load / Save SRS
@@ -136,15 +142,82 @@ No explanation. No extra text."""
         return fallback_check(user, english)
 
 
+def format_explanation(text):
+    """Format explanation text for better readability"""
+    lines = text.split('\n')
+    formatted = []
+    current_section = None
+    example_index = 0
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        
+        # Detect section headers
+        if 'EXPLANATION:' in line:
+            if formatted:
+                formatted.append('')
+            formatted.append('📖 EXPLANATION:')
+            formatted.append('------------------------------------------------------------')
+            current_section = 'explanation'
+            continue
+        elif 'EXAMPLE' in line:
+            formatted.append('')
+            formatted.append(line)
+            formatted.append('------------------------------------------------------------')
+            current_section = 'example'
+            example_index = 0
+            continue
+        
+        # Add proper formatting based on content
+        if current_section == 'explanation':
+            formatted.append('  ' + line)
+        elif current_section == 'example':
+            if line.startswith('DE:'):
+                line_text = line[3:].strip()
+                if example_index == 0:
+                    formatted.append('    DE: ' + line_text)
+                else:
+                    formatted.append('    EN: ' + line_text)
+            elif line.startswith('EN:'):
+                formatted.append('    EN: ' + line[3:].strip())
+            elif line.startswith('[') and line.endswith(']'):
+                english = line[1:-1].strip()
+                formatted.append('    EN: ' + english)
+            else:
+                if example_index == 0:
+                    formatted.append('    DE: ' + line)
+                else:
+                    formatted.append('    EN: ' + line)
+            example_index += 1
+        else:
+            formatted.append(line)
+    
+    # Build formatted output without outer borders
+    result = '\n'.join(formatted)
+    
+    return result
+
+
 def explain_word(german, english):
     prompt = f"""You are a friendly German teacher.
 
 Word: {german}
 Meaning: {english}
 
-Give:
-1. A simple short explanation in English
-2. Two easy German A2-level example sentences with English translation"""
+Give the answer in this exact format:
+
+EXPLANATION:
+[A simple short explanation in English]
+
+EXAMPLE 1:
+[German sentence]
+[English translation]
+
+EXAMPLE 2:
+[German sentence]
+[English translation]"""
 
     try:
         response = requests.post(
@@ -152,63 +225,148 @@ Give:
             json={"model": "mistral", "prompt": prompt, "stream": False},
             timeout=20
         )
-        return response.json()["response"]
+        explanation_text = response.json()["response"]
+        # Format for better readability
+        return format_explanation(explanation_text)
     except:
         return "(Explanation not available - Ollama is not running)"
+
+
+# -----------------------------
+# Sheet Selection Dialog
+# -----------------------------
+def select_sheet(parent=None):
+    """Show sheet selection dialog and return selected sheet name"""
+    if parent is None:
+        selection_root = tk.Tk()
+    else:
+        selection_root = tk.Toplevel(parent)
+        selection_root.transient(parent)
+    
+    selection_root.title("German Vocabulary Trainer - Select Category")
+    selection_root.geometry("400x380")
+    selection_root.resizable(False, False)
+    selection_root.config(bg="#f0f0f0")
+    
+    selected_sheet = {"value": None}
+    
+    def on_sheet_selected(sheet_name):
+        selected_sheet["value"] = sheet_name
+        selection_root.destroy()
+    
+    # Title
+    title_label = tk.Label(selection_root, text="Select a Category to Practice", font=("Helvetica", 16, "bold"), bg="#f0f0f0", fg="#1e3a8a")
+    title_label.pack(pady=15)
+    
+    # Buttons for each sheet with different colors
+    button_frame = tk.Frame(selection_root, bg="#f0f0f0", padx=20, pady=20)
+    button_frame.pack(fill=tk.BOTH, expand=True)
+    
+    sheets = [("verben", "#ff6b6b"), ("Nomen", "#4ecdc4"), ("adjective", "#ffd93d"), ("redemittel", "#a78bfa")]
+    
+    for sheet, color in sheets:
+        btn = tk.Button(
+            button_frame,
+            text=sheet.capitalize(),
+            command=lambda s=sheet: on_sheet_selected(s),
+            width=25,
+            bg=color,
+            fg="white",
+            font=("Helvetica", 12, "bold"),
+            relief=tk.RAISED,
+            padx=10,
+            pady=8,
+            cursor="hand2"
+        )
+        btn.pack(pady=10)
+    
+    selection_root.grab_set()
+    if parent is None:
+        selection_root.mainloop()
+    else:
+        selection_root.wait_window()
+    
+    return selected_sheet["value"]
 
 
 # -----------------------------
 # GUI Application
 # -----------------------------
 class GermanSRSApp:
-    def __init__(self, root):
+    def __init__(self, root, sheet_name):
         self.root = root
-        self.root.title("German SRS Vocabulary Trainer")
-        self.root.geometry("850x720")
+        self.root.title(f"German SRS Vocabulary Trainer - {sheet_name.capitalize()}")
+        self.root.geometry("950x780")
+        self.root.config(bg="#f8f9fa")
 
         self.current_step = 0
         self.current_german = None
         self.current_english = None
 
+        # Configure custom styles
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('Title.TLabel', font=("Helvetica", 14, "bold"), background="#f8f9fa", foreground="#1e3a8a")
+        style.configure('Normal.TLabel', background="#f8f9fa")
+        
         # GUI Setup
-        main_frame = ttk.Frame(root, padding=20)
+        main_frame = tk.Frame(root, bg="#f8f9fa", padx=20, pady=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.status_label = ttk.Label(main_frame, text="Loading...", font=("Helvetica", 12))
+        self.status_label = tk.Label(main_frame, text="Loading...", font=("Helvetica", 12), bg="#f8f9fa", fg="#6b7280")
         self.status_label.pack(pady=8)
 
-        ttk.Label(main_frame, text="Translate this German word:", font=("Helvetica", 14, "bold")).pack(anchor="w")
-        self.word_label = ttk.Label(main_frame, text="", font=("Helvetica", 28, "bold"), foreground="#1e88e5")
-        self.word_label.pack(pady=20)
+        tk.Label(main_frame, text="Translate this German word:", font=("Helvetica", 14, "bold"), bg="#f8f9fa", fg="#1e3a8a").pack(anchor="w")
+        self.word_label = tk.Label(main_frame, text="", font=("Helvetica", 32, "bold"), bg="#e3f2fd", fg="#1565c0", padx=20, pady=15, relief=tk.RAISED, bd=2)
+        self.word_label.pack(pady=20, fill=tk.X)
 
-        ttk.Label(main_frame, text="Your English meaning:", font=("Helvetica", 12)).pack(anchor="w")
-        self.input_entry = ttk.Entry(main_frame, font=("Helvetica", 16), width=60)
+        tk.Label(main_frame, text="Your English meaning:", font=("Helvetica", 12, "bold"), bg="#f8f9fa", fg="#1e3a8a").pack(anchor="w")
+        self.input_entry = tk.Entry(main_frame, font=("Helvetica", 16), width=60, bg="white", fg="#1e293b", relief=tk.SUNKEN, bd=2)
         self.input_entry.pack(pady=12, ipady=10)
         self.input_entry.bind("<Return>", lambda e: self.check_answer())
 
         # Buttons
-        btn_frame = ttk.Frame(main_frame)
+        btn_frame = tk.Frame(main_frame, bg="#f8f9fa")
         btn_frame.pack(pady=15)
 
-        self.submit_btn = ttk.Button(btn_frame, text="Submit Answer", command=self.check_answer)
+        self.submit_btn = tk.Button(btn_frame, text="✓ Submit Answer", command=self.check_answer, bg="#10b981", fg="white", font=("Helvetica", 11, "bold"), padx=15, pady=8, relief=tk.RAISED, cursor="hand2")
         self.submit_btn.pack(side=tk.LEFT, padx=8)
 
-        self.hard_btn = ttk.Button(btn_frame, text="Hard (Again later)", command=self.mark_hard)
+        self.hard_btn = tk.Button(btn_frame, text="⟲ Hard (Again later)", command=self.mark_hard, bg="#f59e0b", fg="white", font=("Helvetica", 11, "bold"), padx=15, pady=8, relief=tk.RAISED, cursor="hand2")
         self.hard_btn.pack(side=tk.LEFT, padx=8)
 
+        self.change_btn = tk.Button(btn_frame, text="↺ Change Category", command=self.change_category, bg="#8b5cf6", fg="white", font=("Helvetica", 11, "bold"), padx=15, pady=8, relief=tk.RAISED, cursor="hand2")
+        self.change_btn.pack(side=tk.LEFT, padx=8)
+
         # Feedback
-        self.feedback_label = ttk.Label(main_frame, text="", font=("Helvetica", 14), wraplength=750)
+        self.feedback_label = tk.Label(main_frame, text="", font=("Helvetica", 13), wraplength=750, bg="#f8f9fa", fg="#1e293b")
         self.feedback_label.pack(pady=12)
 
         # Explanation area
-        ttk.Label(main_frame, text="Explanation & Examples:", font=("Helvetica", 12, "bold")).pack(anchor="w", pady=(10,5))
-        self.explain_text = scrolledtext.ScrolledText(main_frame, height=14, font=("Helvetica", 11), wrap=tk.WORD)
+        tk.Label(main_frame, text="📚 Explanation & Examples:", font=("Helvetica", 12, "bold"), bg="#f8f9fa", fg="#1e3a8a").pack(anchor="w", pady=(10,5))
+        self.explain_text = scrolledtext.ScrolledText(main_frame, height=14, font=("Helvetica", 11), wrap=tk.WORD, bg="#fffbeb", fg="#78350f", relief=tk.SUNKEN, bd=2)
         self.explain_text.pack(fill=tk.BOTH, expand=True, pady=5)
 
-        self.next_btn = ttk.Button(main_frame, text="Next Word →", command=self.next_word, state="disabled")
+        self.next_btn = tk.Button(main_frame, text="→ Next Word", command=self.next_word, state="disabled", bg="#3b82f6", fg="white", font=("Helvetica", 12, "bold"), padx=20, pady=10, relief=tk.RAISED, cursor="hand2", disabledforeground="#9ca3af", activebackground="#1d4ed8")
         self.next_btn.pack(pady=15)
 
         self.next_word()   # Start first card
+
+    def change_category(self):
+        new_sheet = select_sheet(self.root)
+        if new_sheet is None:
+            return
+
+        global vocab
+        vocab = load_vocabulary(new_sheet)
+        self.root.title(f"German SRS Vocabulary Trainer - {new_sheet.capitalize()}")
+        self.current_step = 0
+        self.current_german = None
+        self.current_english = None
+        self.feedback_label.config(text="", bg="#f8f9fa")
+        self.explain_text.delete(1.0, tk.END)
+        self.status_label.config(text="Category changed. Loading new words...")
+        self.next_word()
 
     def get_due_words(self):
         return [(g, e) for g, e in vocab if get_card(g)["due"] <= self.current_step]
@@ -247,14 +405,15 @@ class GermanSRSApp:
         is_correct = ai_check(user, self.current_english)
 
         if is_correct:
-            self.feedback_label.config(text="✅ Correct! Great job.", foreground="green")
+            self.feedback_label.config(text="✅ Correct! Great job.", fg="#059669", bg="#d1fae5")
             explanation = explain_word(self.current_german, self.current_english)
             self.explain_text.insert(tk.END, explanation)
             update_srs(self.current_german, 2, self.current_step)   # Easy
         else:
             self.feedback_label.config(
                 text=f"❌ Not quite right.\nCorrect meaning(s): {self.current_english}",
-                foreground="red"
+                fg="#dc2626",
+                bg="#fee2e2"
             )
             update_srs(self.current_german, 0, self.current_step)   # Wrong
 
@@ -274,6 +433,18 @@ class GermanSRSApp:
 # Run the app
 # -----------------------------
 if __name__ == "__main__":
+    # Show sheet selection dialog
+    selected_sheet = select_sheet()
+    
+    if selected_sheet is None:
+        print("No sheet selected. Exiting.")
+        exit()
+    
+    # Load vocabulary from selected sheet
+    vocab = load_vocabulary(selected_sheet)
+    print(f"Loaded {len(vocab)} words from '{selected_sheet}'\n")
+    
+    # Start the GUI
     root = tk.Tk()
-    app = GermanSRSApp(root)
+    app = GermanSRSApp(root, selected_sheet)
     root.mainloop()
