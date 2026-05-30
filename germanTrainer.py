@@ -262,7 +262,7 @@ def select_sheet(parent=None):
     button_frame = tk.Frame(selection_root, bg="#f0f0f0", padx=20, pady=20)
     button_frame.pack(fill=tk.BOTH, expand=True)
     
-    sheets = [("verben", "#ff6b6b"), ("Nomen", "#4ecdc4"), ("adjective", "#ffd93d"), ("redemittel", "#a78bfa")]
+    sheets = [("Verben", "#ff6b6b"), ("Nomen", "#4ecdc4"), ("Adjective", "#ffd93d"), ("Redemittel", "#a78bfa")]
     
     for sheet, color in sheets:
         btn = tk.Button(
